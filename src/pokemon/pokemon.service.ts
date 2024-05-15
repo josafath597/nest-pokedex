@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, isValidObjectId } from 'mongoose';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
@@ -8,12 +9,15 @@ import { Pokemon } from './entities/pokemon.entity';
 
 @Injectable()
 export class PokemonService {
+  private defaultLimit: number;
   constructor(
     @InjectModel(Pokemon.name)
     private readonly pokemonModel: Model<Pokemon>,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.defaultLimit = this.configService.get<number>('defaultLimit');
+  }
   async create(createPokemonDto: CreatePokemonDto) {
-    console.log(createPokemonDto);
     createPokemonDto.name = createPokemonDto.name.toLowerCase();
     try {
       const pokemon = await this.pokemonModel.create(createPokemonDto);
@@ -23,9 +27,26 @@ export class PokemonService {
     }
   }
 
-  findAll(paginationDto: PaginationDto) {
-    const { limit = 10, offset = 0 } = paginationDto;
-    return this.pokemonModel.find().limit(limit).skip(offset).sort({ no: 1 }).select('-__v');
+  async findAll(paginationDto: PaginationDto) {
+    const { limit = this.defaultLimit, page = 1, search = '' } = paginationDto;
+    // Construyendo la busqueda
+    const filter = search
+      ? { name: new RegExp(search, 'i') } // La 'i' hace que la búsqueda no distinga entre mayúsculas y minúsculas
+      : {};
+
+    // Asegurándonos de que el skip se calcula correctamente
+    const skip = (page - 1) * limit;
+    // Obteniendo el número total de documentos que coinciden con la consulta
+    const totalDocuments = await this.pokemonModel.countDocuments(filter);
+
+    // Calculando el total de páginas
+    const totalPages = Math.ceil(totalDocuments / limit);
+
+    const pokemons = await this.pokemonModel.find(filter).limit(limit).skip(skip).sort({ no: 1 }).select('-__v');
+    return {
+      totalPages: totalPages,
+      data: pokemons,
+    };
   }
 
   async findOne(term: string) {
